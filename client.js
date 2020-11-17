@@ -20,7 +20,7 @@ const {getErrorMessage} = require("./exception");
 const BUF0 = Buffer.alloc(0);
 
 const server_list = [
-    {ip:"msfwifi.3g.qq.com",port:8080,ping:null},
+    {ip:"msfwifi.3g.qq.com", port:8080},
 ];
 
 function buildApiRet(retcode, data = null, error = null) {
@@ -41,28 +41,8 @@ class Client extends net.Socket {
 }
 class AndroidClient extends Client {
     reconn_flag = true;
-    logger;
-    config;
     status = Client.OFFLINE;
-    kickoff_reconn = false;
-    ignore_self = true;
 
-    // default phone
-    apkid = "com.tencent.mobileqq";
-    apkver = "8.4.1.2703";
-    apkname = "A8.4.1.2703aac4";
-    apksign = Buffer.from([166, 183, 69, 191, 36, 162, 194, 119, 82, 119, 22, 246, 243, 110, 182, 141]);
-    buildtime = 1591690260;
-    appid = 16;
-    sub_appid = 537064989;
-    bitmap = 184024956;
-    sigmap = 34869472;
-    sdkver = "6.0.0.2433";
-    ksid;
-    device;
-    
-    uin = 0;
-    password_md5;
     nickname = "";
     age = 0;
     sex = "unknown";
@@ -81,8 +61,6 @@ class AndroidClient extends Client {
 
     session_id = crypto.randomBytes(4);
     random_key = crypto.randomBytes(16);
-    captcha_sign;
-    t104;
 
     sig = {
         srm_token: BUF0,
@@ -96,6 +74,7 @@ class AndroidClient extends Client {
         sig_key: BUF0,
         ticket_key: BUF0,
         device_token: BUF0,
+        emp_time: timestamp(),
     };
     cookies = {};
 
@@ -105,54 +84,48 @@ class AndroidClient extends Client {
     const2 = crypto.randomBytes(4).readUInt32BE();
     const3 = crypto.randomBytes(1)[0];
 
-    dir;
+    stat = {
+        start_time: timestamp(),
+        lost_times: 0,
+        recv_pkt_cnt: 0,
+        sent_pkt_cnt: 0,
+        recv_msg_cnt: 0,
+        sent_msg_cnt: 0,
+    };
 
-    constructor(uin, config = {}) {
+    constructor(uin, config) {
         super();
         this.uin = uin;
 
         config = {
-            platform:    2,      //1手机 2平板 3手表(不支持部分群事件)
-            log_level:   "info", //trace,debug,info,warn,error,fatal,off
-            kickoff:     false,  //被挤下线是否在3秒后反挤
-            ignore_self: true,   //是否无视自己的消息(群聊、私聊)
-            data_dir:    path.join(process.mainModule.path, "data"),
+            platform: 2,
+            log_level: "info",
+            kickoff: false,
+            ignore_self:true,
+            resend: true,
+            data_dir: path.join(process.mainModule.path, "data"),
             ...config
         };
         this.config = config;
-
-        this.dir = createCacheDir(config.data_dir, uin);
-
+        this.dir = createDataDir(config.data_dir, uin);
         this.logger = log4js.getLogger(`[BOT:${uin}]`);
         this.logger.level = config.log_level;
-        this.ignore_self = config.ignore_self;
-        this.kickoff_reconn = config.kickoff;
-
-        if (config.platform == 3)
-            this.sub_appid = 537061176;
-        else if  (config.platform == 2) {
-            this.sub_appid = 537065549;
-            this.apkid = "com.tencent.minihd.qq";
-            this.apkver = "5.8.9.3460";
-            this.apkname = "A5.8.9.3460";
-            this.apksign = Buffer.from([170, 57, 120, 244, 31, 217, 111, 249, 145, 74, 102, 158, 24, 100, 116, 199]);
-            this.buildtime = 1595836208;
-            this.bitmap = 150470524;
-            this.sigmap = 1970400;
-        }
 
         const filepath = path.join(this.dir, `device-${uin}.json`);
         if (!fs.existsSync(filepath))
             this.logger.info("创建了新的设备文件：" + filepath);
-        this.device = device(filepath);
-        this.ksid = Buffer.from(`|${this.device.imei}|` + this.apkname);
+        this.device = device.getDeviceInfo(filepath);
+        this.apk = device.getApkInfo(config.platform);
+        if (config.platform == 3)
+            this.apk.subid = 537061176;
+        this.ksid = Buffer.from(`|${this.device.imei}|` + this.apk.name);
 
         this.on("error", (err)=>{
             this.logger.error(err.message);
-            this.status = Client.INIT;
         });
         this.on("close", (e_flag)=>{
             this.read();
+            ++this.stat.lost_times;
             if (this.remoteAddress)
                 this.logger.info(`${this.remoteAddress}:${this.remotePort} closed`);
             this.stopHeartbeat();
@@ -166,7 +139,7 @@ class AndroidClient extends Client {
                     this.reconn_flag = false;
                 setTimeout(()=>{
                     this._connect(this.register.bind(this));
-                }, 1000);
+                }, 500);
             }
         });
 
@@ -179,6 +152,7 @@ class AndroidClient extends Client {
                     this.reconn_flag = true;
                     this.recv_timestamp = Date.now();
                     const packet = this.read(len - 4);
+                    ++this.stat.recv_pkt_cnt;
                     try {
                         core.parseIncomingPacket.call(this, packet);
                     } catch (e) {
@@ -232,6 +206,7 @@ class AndroidClient extends Client {
     }
 
     async send(packet, timeout = 3000) {
+        ++this.stat.sent_pkt_cnt;
         const seq_id = this.seq_id;
         return new Promise((resolve, reject)=>{
             this.write(packet, ()=>{
@@ -249,6 +224,7 @@ class AndroidClient extends Client {
         });
     }
     writeUNI(cmd, body, seq) {
+        ++this.stat.sent_pkt_cnt;
         this.write(wt.build0x0BPacket.apply(this, arguments));
     }
     async sendUNI(cmd, body, seq) {
@@ -260,14 +236,16 @@ class AndroidClient extends Client {
             return;
         this.heartbeat = setInterval(async()=>{
             this.doCircle();
-            if (Date.now() - this.send_timestamp > 240000)
-                core.getMsg.call(this);
             try {
                 await wt.heartbeat.call(this);
-            } catch (e) {
-                this.logger.warn("Heartbeat timeout!");
-                if (Date.now() - this.recv_timestamp > 10000)
-                    this.destroy();
+            } catch {
+                try {
+                    await wt.heartbeat.call(this);
+                } catch {
+                    this.logger.warn("Heartbeat timeout!");
+                    if (Date.now() - this.recv_timestamp > 15000)
+                        this.destroy();
+                }
             }
         }, 60000);
     }
@@ -300,9 +278,8 @@ class AndroidClient extends Client {
                 let sub_type;
                 if (data.info.includes("另一")) {
                     sub_type = "kickoff";
-                    if (this.kickoff_reconn) {
+                    if (this.config.kickoff) {
                         this.logger.info("3秒后重新连接..");
-                        this.ksid = Buffer.from(`|${this.device.imei}|` + this.apkname);
                         setTimeout(this.login.bind(this), 3000);
                     } else {
                         this.terminate();
@@ -388,6 +365,9 @@ class AndroidClient extends Client {
         }
     }
     doCircle() {
+        wt.exchangeEMP.call(this);
+        if (Date.now() - this.send_timestamp > 120000)
+            core.getMsg.call(this);
         for (let time of this.seq_cache.keys()) {
             if (timestamp() - time >= 60)
                 this.seq_cache.delete(time);
@@ -601,11 +581,14 @@ class AndroidClient extends Client {
     async setPortrait(file) {
         return await this.useProtocol(indi.setPortrait, arguments);
     }
+    async setGroupPortrait(group_id, file) {
+        return await this.useProtocol(indi.setGroupPortrait, arguments);
+    }
 
     ///////////////////////////////////////////////////
 
     async getCookies(domain) {
-        // await wt.exchangeEMP();
+        await wt.exchangeEMP.call(this);
         if (domain && !this.cookies[domain])
             return buildApiRet(100, null, {code: -1, message: "unknown domain"});
         let cookies = `uin=o${this.uin}; skey=${this.sig.skey};`;
@@ -615,7 +598,7 @@ class AndroidClient extends Client {
     }
 
     async getCsrfToken() {
-        // await wt.exchangeEMP();
+        await wt.exchangeEMP.call(this);
         let token = 5381;
         for (let v of this.sig.skey)
             token = token + (token << 5) + v;
@@ -663,7 +646,8 @@ class AndroidClient extends Client {
         return buildApiRet(0, {
             online: this.isOnline(),
             status: this.online_status,
-            msg_cnt_per_min: this.calcMsgCnt()
+            msg_cnt_per_min: this.calcMsgCnt(),
+            statistics: this.stat,
         })
     }
     getLoginInfo() {
@@ -674,8 +658,6 @@ class AndroidClient extends Client {
         })
     }
 }
-
-//----------------------------------------------------------------------------------------------------
 
 /**
  * @deprecated
@@ -688,7 +670,7 @@ process.OICQ = {
 
 console.log("OICQ程序启动。当前内核版本：v" + version.version);
 
-function createCacheDir(dir, uin) {
+function createDataDir(dir, uin) {
     if (!fs.existsSync(dir))
         fs.mkdirSync(dir, {mode: 0o755, recursive: true});
     const img_path = path.join(dir, "image");
@@ -707,6 +689,8 @@ function createCacheDir(dir, uin) {
  * @deprecated
  */
 function setGlobalConfig() {}
+
+//----------------------------------------------------------------------------------------------------
 
 /**
  * @param {Number} uin 

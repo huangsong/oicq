@@ -52,6 +52,21 @@ export interface Sig {
     sig_key: Buffer,
     ticket_key: Buffer,
     device_token?: Buffer,
+    emp_time: number,
+}
+
+export interface ApkInfo {
+    id: string,
+    name: string,
+    version: string,
+    ver: string,
+    sign: Buffer,
+    buildtime: number,
+    appid: number,
+    subid: number,
+    bitmap: number,
+    sigmap: number,
+    sdkver: string,
 }
 
 export interface ProtocolResponse {
@@ -66,26 +81,24 @@ export interface HighwayUploadObject {
     key: Buffer,
 }
 
+export interface Statistics {
+    start_time: number,
+    lost_times: number,
+    recv_pkt_cnt: number,
+    sent_pkt_cnt: number,
+    recv_msg_cnt: number,
+    sent_msg_cnt: number,
+}
+
 //////////
 
 export class Client extends oicq.Client {
     logger: log4js.Logger;
-    ignore_self: boolean;
     reconn_flag: boolean;
     config: oicq.ConfBot;
     status: Symbol;
-    kickoff_reconn: boolean;
 
-    apkid: string;
-    apkver: string;
-    apkname: string;
-    apksign: Buffer;
-    buildtime: number;
-    appid: number;
-    sub_appid: number;
-    bitmap: number;
-    sigmap: number;
-    sdkver: string;
+    apk: ApkInfo;
     ksid: string | Buffer;
     device: Device;
     
@@ -123,6 +136,7 @@ export class Client extends oicq.Client {
     dir: string;
     sig: Sig;
     cookies: object;
+    stat: Statistics;
 
     nextSeq(): number;
     send(): Promise<Buffer>;
