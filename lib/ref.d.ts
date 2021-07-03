@@ -2,8 +2,7 @@
 
 /// <reference types="node" />
 
-import * as oicq from '../client';
-import * as log4js from 'log4js';
+import * as oicq from '../index';
 
 //////////
 
@@ -69,80 +68,138 @@ export interface ApkInfo {
     sdkver: string,
 }
 
-export interface ProtocolResponse {
+export type ProtocolResponse = Promise<{
     result: number,
     emsg?: string,
     data?: any,
-}
+}>
 
-export interface HighwayUploadObject {
-    buf: Buffer,
+export interface HighwayUploadStreamObject {
+    cmd: number,
+    size: number,
     md5: Buffer,
-    key: Buffer,
+    ticket?: Buffer,
+    ext?: Buffer,
+    encrypt?: boolean,
 }
 
-export interface Statistics {
-    start_time: number,
-    lost_times: number,
-    recv_pkt_cnt: number,
-    sent_pkt_cnt: number,
-    recv_msg_cnt: number,
-    sent_msg_cnt: number,
+export interface Proto {
+    [k: number]: Proto,
+    toString: () => string,
+    toHex: () => string,
+    toBase64: () => string,
+    toBuffer: () => Buffer,
+    [Symbol.toPrimitive]: () => string,
+}
+
+export interface Msg extends Proto {
+    1: MsgHead,
+    2: MsgContent,
+    3: MsgBody,
+}
+
+export interface MsgHead extends Proto {
+    1: number, //from uin
+    2: number, //to uin
+    3: number, //type
+    4: bigint, //uuid
+    5: number, //seqid
+    6: number, //time
+    7: bigint, //uuid
+    8: { //routing
+        4: number //group_id
+    },
+    9: {
+        1: number, //group_id
+        4: Proto, //card
+        8: Proto, //group_name
+    },
+    10: number, //appid
+    13: {
+        1: number, //disscus_id
+        4: Proto, //card
+        5: Proto, //disscus_name
+    },
+}
+
+export interface MsgContent extends Proto {
+    1: number, //pkt cnt
+    2: number, //pkt index
+    3: number, //div
+    4: number, //auto reply
+}
+
+export interface MsgBody extends Proto {
+    1: RichMsg,
+    2: Proto, //离线文件
+}
+
+export interface RichMsg extends Proto {
+    1: MsgAttr,
+    2: Proto[], //common
+    4: Proto, //ptt
+}
+
+export interface MsgAttr extends Proto {
+    2: number, //time
+    3: number, //random integer
+    9: Proto, //font
+}
+
+export interface Storage {
+    sig_session: Buffer,
+    session_key: Buffer,
+    ip: string,
+    port: number,
 }
 
 //////////
 
 export class Client extends oicq.Client {
-    logger: log4js.Logger;
-    reconn_flag: boolean;
-    config: oicq.ConfBot;
+    logining: boolean;
     status: Symbol;
 
-    apk: ApkInfo;
-    ksid: string | Buffer;
-    device: Device;
-    
-    uin: number;
-    password_md5: Buffer;
-    nickname: string;
-    age: number;
-    sex: string;
-    online_status: number;
     fl: Map<number, oicq.FriendInfo>;
     sl: Map<number, oicq.StrangerInfo>;
     gl: Map<number, oicq.GroupInfo>;
     gml: Map<number, Map<number, oicq.MemberInfo>>;
 
-    recv_timestamp: number;
-    send_timestamp: number;
-    heartbeat: NodeJS.Timeout | null;
+    apk: ApkInfo;
+    ksid: string | Buffer;
+    device: Device;
+
     seq_id: number;
-    handlers: Map<number, (Buffer) => void>;
+    handlers: Map<number, (buf: Buffer) => void>;
     seq_cache: Map<number, Set<string>>;
 
     session_id: Buffer;
     random_key: Buffer;
     captcha_sign?: Buffer;
     t104?: Buffer;
+    t106: Buffer;
+    t174?: Buffer;
+    phone?: string;
     t402?: Buffer;
     t403?: Buffer;
 
     sync_finished: boolean;
     sync_cookie: Buffer;
-    const1: number;
-    const2: number;
-    const3: number;
 
-    dir: string;
     sig: Sig;
     cookies: object;
-    stat: Statistics;
+
+    storage: Storage;
 
     nextSeq(): number;
     send(): Promise<Buffer>;
-    sendUNI(cmd: string, body: Buffer, seq?: number): Promise<Buffer>;
-    writeUNI(cmd: string, body: Buffer, seq?: number): void;
-    useProtocol(fn: Function, params: any[]): oicq.RetCommon;
+    sendOidb(cmd: string, body: Buffer): Promise<Buffer>;
+    sendUni(cmd: string, body: Buffer): Promise<Buffer>;
+    writeUni(cmd: string, body: Buffer, seq?: number): void;
     em(name: string, data: object): void;
     msgExists(from: number, type: number, seq: number, time: number): boolean;
+    buildSyncCookie(): Buffer;
+    parseEventType(name: string): oicq.CommonEventData;
+    pbGetMsg(): Promise<boolean>;
 }
+
+export * from '../index';
